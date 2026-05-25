@@ -1,0 +1,401 @@
+---
+title: "hybrid_figure_production"
+author: "Anita Wray"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+
+packages <- c('rnaturalearth', 'sf', 'patchwork', 'reshape', 'rnaturalearthdata',
+              'dplyr', 'tidyverse','readxl', "multcompView", 'ggsignif', 'data.table', 
+              'patchwork', 'ggOceanMaps', "tools", "dplyr", 'sp', 'readr',
+              'mapproj', 'cowplot', 'stringr', 'plotly', 'lme4', 'car', 'emmeans')
+
+# Install packages not yet installed
+installed_packages <- packages %in% rownames(installed.packages())
+if (any(installed_packages == FALSE)) {
+  install.packages(packages[!installed_packages])
+}
+
+# Packages loading
+invisible(lapply(packages, library, character.only = TRUE))
+theme_set(theme_classic())
+
+#Set colors
+color_pal_hybrids <- c(
+  'vermilion' = '#481567FF',
+  'sunset' = '#2D708EFF', 
+  'hybrid' = '#55C667FF')
+```
+
+
+```{r load in files}
+setwd("~/Desktop/VermilionRF/VMSURF Species ID/")
+
+in_file <- "~/Desktop/VermilionRF/VMSURF Species ID/metadata/H&L-WCGBTS Combined_Vermilion RF Finclip Metadata_SK_040125_AW.xlsx"
+
+#Now lets load in metadata
+passed_metadata <- read_xlsx(in_file) 
+
+table(passed_metadata$`Rubias Species Call`)
+length(!is.na(passed_metadata$`Rubias Species Call`))
+
+meta <- passed_metadata[(passed_metadata$`Rubias Species Call` != 'canary' | is.na(passed_metadata$`Rubias Species Call`)),]
+meta <- meta[(meta$`Rubias Species Call` != 'bocaccio' | is.na(meta$`Rubias Species Call`)),]
+meta <- meta[(meta$`Rubias Species Call` != 'rebs' | is.na(meta$`Rubias Species Call`)),]
+
+#Make sure depth is a continuous variable
+meta$Depth..m. <- as.numeric(meta$Depth..m.)
+meta$Fork.length..cm. <- as.numeric(meta$Fork.length..cm.) 
+
+#Convert hybrid samples to hybrid ID
+hybrids <- read.csv("~/Desktop/VermilionRF/VMSURF Species ID/newhybrids/ver_sun_w_hybrids/PofZ_results_5_12_25.csv") %>%
+  subset(hybridclass != 'PV') %>%
+  subset(hybridclass != 'PS') %>%
+  select(c('individuals', 'hybridclass'))
+
+hybrid_id <- hybrids$individuals
+
+hybrid_id <- gsub("_", "-", hybrid_id)
+
+
+meta$`Rubias Species Call`[meta$Specimen.Num %in% hybrid_id] <- 'hybrid'
+meta$`Rubias Pop Call`[meta$Specimen.Num %in% hybrid_id] <- 'hybrid'
+
+
+table(meta$`Rubias Species Call`)
+
+meta <- meta %>%
+  drop_na(`Rubias Species Call`) %>%
+  subset(`Rubias Species Call` != 'rebs')
+```
+
+
+```{r mapping}
+world <- ne_countries(scale = "large", returnclass = "sf")
+path.eez.usa <- ("~/Desktop/VermilionRF/VMSURF Species ID/metadata/shapefiles/EEZ_land_union_v3_202003/")
+fnam.eez.usa <- "EEZ_Land_v3_202030.shp"
+eez.usa <- st_read(dsn = path.eez.usa, layer = file_path_sans_ext(fnam.eez.usa))
+states_map <- sf::st_as_sf(maps::map("state", plot = FALSE, fill = TRUE))
+
+dat.eez.usa1 <- fortify(eez.usa) # a 180400x22 dataframe
+labels <- read.csv(file = "~/Desktop/VermilionRF/VMSURF Species ID/metadata/paper2_labels.csv")
+map_labels <- read.csv(file = "~/Desktop/VermilionRF/VMSURF Species ID/metadata/paper2_labels_2.csv")
+
+map <- ggplot() +
+  geom_sf(data = dat.eez.usa1, size = 0.6, color = "grey", fill = 'white',inherit.aes = FALSE)+
+  geom_sf(data = world, inherit.aes = FALSE) +
+  geom_sf(data = states_map, fill = NA, color = "grey50", inherit.aes = FALSE) +
+  geom_point(data = meta, aes(x = `LonDD.v2`, 
+                                         y = `LatDD`, 
+                                         col = factor(`Rubias Species Call`, 
+                                                      levels = c('sunset','hybrid','vermilion'))),
+             size = 0.5)+
+  coord_sf(xlim = c(-113, -128), ylim = c(29, 50.5), expand = FALSE)+
+  scale_x_continuous(breaks = c(-126, -122, -118)) +
+  scale_color_manual(values = color_pal_hybrids)+
+  theme(
+    strip.background = element_blank(),
+    strip.text.x = element_blank(),
+    legend.position = c(0.915, 0.87),
+    legend.title=element_blank(),
+    legend.spacing = unit(0, "pt"),
+    axis.title.x=element_blank(),
+    axis.title.y=element_blank(),
+    panel.border = element_rect(colour = "black", fill=NA),
+    legend.background = element_blank(),
+    legend.box.background = element_rect(colour = "black"))+
+  facet_wrap(~factor(`Rubias Species Call`, levels = c('sunset','hybrid','vermilion'))) +
+  guides(color = guide_legend(override.aes = list(size = 2)))+
+  geom_text(data = labels, aes(label = label, x = long, y = lat), size.unit = 'mm', size = 2)+
+  geom_segment(data = labels, 
+               aes(x = start.arrow.long, y = start.arrow.lat, xend = end.arrow.long, yend = end.arrow.lat), 
+               color = 'black', size = 0.5, alpha = 0.6, arrow = arrow(length = unit(0.15, "cm"))) +
+  geom_text(data = map_labels, aes(label = label, x= long, y = lat, color = color, angle = angle), size.unit = 'mm', size = 2)
+
+#ggplotly(map + theme(legend.position = 'none'))
+
+
+ggsave(file = "~/Desktop/VermilionRF/VMSURF Species ID/figures/pop_struct_MS/Fig3-HybridMap.jpeg",
+      width = 174,
+       height = 110,
+       units = c("mm"),
+       dpi = 900)
+map
+dev.off()
+```
+
+```{r additional data processing}
+
+vermilion_sites <- unique((meta %>% subset(`Rubias Species Call` == 'vermilion'))$Site.Cell.ID)
+sunset_sites <- unique((meta %>% subset(`Rubias Species Call` == 'sunset'))$Site.Cell.ID)
+hyb_sites <- unique((meta %>% subset(`Rubias Species Call` == 'hybrid'))$Site.Cell.ID)
+
+
+(hyb_sites_no_verm <- hyb_sites[which(!hyb_sites %in% vermilion_sites)])
+
+
+
+
+df <- as.data.frame.matrix(table(meta$Site.Cell.ID, meta$`Rubias Species Call`, useNA = "ifany")) %>%
+  subset(hybrid > 0 & vermilion == 0) 
+
+
+#Change column names
+names(meta)[names(meta) == 'Rubias Species Call'] <- 'repunit'
+names(meta)[names(meta) == 'Rubias Pop Call'] <- 'collection'
+
+#Create a column which groups the samples into three size classes
+#Based on email convo with John Harms
+sunverm_hybrid <- meta %>% 
+  mutate(sizeclass = case_when(
+    Fork.length..cm. >= 35 ~ 'Adult',
+    Fork.length..cm. < 35 ~ 'Subadult')
+  )
+
+sunverm_hybrid <- sunverm_hybrid %>%
+  mutate(collection_method = case_when(
+    Survey == 'CB-ESA' ~ 'H&L',
+    Survey == 'H&L' ~ 'H&L',
+    Survey == 'Hyde Specimen' ~ 'PortSample',
+    Survey == 'ODFW-Brookings' ~ 'PortSample',
+    Survey == 'WDFW' ~ 'PortSample',
+    Survey == 'WCGBTS' ~ 'Trawl'))
+
+#Remove data absent samples
+sunverm_hybrid_size <- sunverm_hybrid[!is.na(sunverm_hybrid$sizeclass),]
+
+#Create a age class column
+sunverm_hybrid <- sunverm_hybrid %>% 
+  mutate(ageclass = case_when(
+    Ages <= 5 ~ 'Under 5',
+    Ages >5 ~ 'Over 5')
+  )
+#Remove data absent individuals
+sunverm_hybrid_age <- sunverm_hybrid[!is.na(sunverm_hybrid$ageclass),]
+```
+
+
+```{r biological stats - models}
+library(multcomp)
+#weight
+m1 <- lmer(data = sunverm_hybrid,
+           `Wt..kg.` ~ repunit + (1 | Year) + (1 | collection_method))
+AIC(m1)
+m2 <- lmer(data = sunverm_hybrid,
+           `Wt..kg.` ~ repunit  + (1 | collection_method))
+AIC(m2)
+m3 <- lmer(data = sunverm_hybrid,
+           `Wt..kg.` ~ repunit  + (1 | Year))
+AIC(m3)
+
+
+summary(m1)
+Anova(m1)
+
+ctm_obs.emm <- emmeans(m1, pairwise ~ repunit, adjust = "tukey")
+
+ctm_obs.emm
+
+cld <- cld(ctm_obs.emm, alpha = 0.05, Letters = LETTERS)
+
+# table with factors and 3rd quantile
+wt_tbl <- group_by(sunverm_hybrid, repunit) %>%
+  summarise(depth=mean(`Wt..kg.`, na.rm = T), sd = sd(`Wt..kg.`, na.rm = T))
+# extracting the compact letter display and adding to the Tk table
+wt_tbl <- merge(wt_tbl, cld)
+
+
+
+
+# length
+m1 <- lmer(data = sunverm_hybrid,
+           `Fork.length..cm.` ~ repunit + (1 | Year) + (1 | collection_method))
+AIC(m1)
+m2 <- lmer(data = sunverm_hybrid,
+           `Fork.length..cm.` ~ repunit  + (1 | collection_method))
+AIC(m2)
+m3 <- lmer(data = sunverm_hybrid,
+           `Fork.length..cm.` ~ repunit  + (1 | Year))
+AIC(m3)
+
+
+summary(m1)
+Anova(m1)
+
+ctm_obs.emm <- emmeans(m1, pairwise ~ repunit, adjust = "tukey")
+
+ctm_obs.emm
+
+cld <- cld(ctm_obs.emm, alpha = 0.05, Letters = LETTERS)
+
+# table with factors and 3rd quantile
+length_tbl <- group_by(sunverm_hybrid, repunit) %>%
+  summarise(depth=mean(`Fork.length..cm.`, na.rm = T), sd = sd(`Fork.length..cm.`, na.rm = T))
+# extracting the compact letter display and adding to the Tk table
+length_tbl <- merge(length_tbl, cld)
+
+
+# depth
+
+m1 <- lmer(data = sunverm_hybrid,
+           `Depth..m.` ~ repunit + (1 | Year) + (1 | collection_method))
+AIC(m1)
+m2 <- lmer(data = sunverm_hybrid,
+           `Depth..m.` ~ repunit  + (1 | collection_method))
+AIC(m2)
+m3 <- lmer(data = sunverm_hybrid,
+           `Depth..m.` ~ repunit  + (1 | Year))
+AIC(m3)
+
+
+summary(m1)
+Anova(m1)
+
+ctm_obs.emm <- emmeans(m1, pairwise ~ repunit, adjust = "tukey")
+
+ctm_obs.emm
+
+cld <- cld(ctm_obs.emm, alpha = 0.05, Letters = LETTERS)
+
+# table with factors and 3rd quantile
+depth_tbl <- group_by(sunverm_hybrid, repunit) %>%
+  summarise(depth=mean(`Depth..m.`, na.rm = T), sd = sd(`Depth..m.`, na.rm = T))
+# extracting the compact letter display and adding to the Tk table
+depth_tbl <- merge(depth_tbl, cld)
+```
+
+```{r anovas}
+#Two-way anova of adult and subadult species depth differences
+adult <- sunverm_hybrid_size[sunverm_hybrid_size$sizeclass == 'Adult',]
+subadult <- sunverm_hybrid_size[sunverm_hybrid_size$sizeclass == 'Subadult',]
+
+m1 <- lmer(data = adult,
+           `Depth..m.` ~ repunit  + (1 | Year)+ (1 | collection_method))
+AIC(m1)
+
+
+summary(m1)
+Anova(m1)
+
+ctm_obs.emm <- emmeans(m1, pairwise ~ repunit, adjust = "tukey")
+
+ctm_obs.emm
+
+cld <- cld(ctm_obs.emm, alpha = 0.05, Letters = LETTERS)
+
+large_depth_tbl <- cld
+large_depth_tbl$sizeclass <- 'Adult'
+
+adult_depth_tbl <- group_by(adult, repunit) %>%
+  summarise(depth=mean(`Depth..m.`, na.rm = T), se = (sd(`Depth..m.`, na.rm = T)/sqrt(length(na.omit(`Depth..m.`)))))
+
+juv_depth_tbl <- group_by(subadult, repunit) %>%
+  summarise(depth=mean(`Depth..m.`, na.rm = T), se = (sd(`Depth..m.`, na.rm = T)/sqrt(length(na.omit(`Depth..m.`)))))
+
+
+## Subadults
+
+m1 <- lmer(data = subadult,
+           `Depth..m.` ~ repunit  + (1 | Year)+ (1 | collection_method))
+AIC(m1)
+
+
+summary(m1)
+Anova(m1)
+
+ctm_obs.emm <- emmeans(m1, pairwise ~ repunit, adjust = "tukey")
+
+ctm_obs.emm
+
+cld <- cld(ctm_obs.emm, alpha = 0.05, Letters = LETTERS)
+
+small_depth_tbl <- cld
+small_depth_tbl$sizeclass <- 'Subadult'
+
+
+size_depth_tbl <- rbind(large_depth_tbl, small_depth_tbl)
+
+
+
+df2 <- as.data.frame.matrix(table(sunverm_hybrid_size$Site.Cell.ID, sunverm_hybrid_size$repunit, useNA = "ifany"))
+
+sunverm_hybrid_adult <- subset(sunverm_hybrid_size, sunverm_hybrid_size$sizeclass == 'Adult')
+```
+
+
+```{r plotting}
+depth <- ggplot(data = meta,
+       aes(x = factor(repunit, levels = c('sunset','hybrid','vermilion')), 
+           y = `Depth..m.`,
+           col = repunit)) +
+  geom_boxplot()+
+  theme(legend.position = 'none') +
+  #facet_wrap(~sizeclass) + 
+  ylab('Depth (m)')+
+  xlab('Species')+
+  scale_color_manual(values = color_pal_hybrids)+
+  ylim(0,350)
+
+(depth_and_size <- ggplot(data = sunverm_hybrid_size,
+       aes(x = factor(repunit, levels = c('sunset','hybrid','vermilion')), 
+           y = `Depth..m.`,
+           col = repunit)) +
+  geom_boxplot()+
+  geom_text(data = size_depth_tbl, aes(x = factor(repunit, levels = c('sunset','hybrid','vermilion')),
+                                y = c(200, 227, 332, 150, 122, 215), label = .group),
+            size = 4, color = "black") +
+  theme(legend.position = 'none',
+        axis.title.x = element_blank()) +
+  scale_y_continuous(expand = c(0, 0), limits = c(0,350), breaks = c(100,200,300)) +
+  facet_wrap(~sizeclass) + 
+  ylab('Depth (m)')+
+  xlab('Species')+
+  scale_color_manual(values = color_pal_hybrids))
+
+(length <- ggplot(data = meta,
+       aes(x = factor(repunit, levels = c('sunset','hybrid','vermilion')),
+           y = `Fork.length..cm.`,
+           col = repunit)) +
+  geom_boxplot()+
+  theme(legend.position = 'none',
+        axis.title.x = element_blank()) +
+  ylab('Fork Length (cm)')+
+  xlab('Species')+
+  scale_color_manual(values = color_pal_hybrids) +
+  geom_text(data = length_tbl, aes(x = repunit, y = c(64, 70, 67), label = .group), 
+            size = 4, color = "black"))
+
+(weight <- ggplot(data = meta,
+       aes(x = factor(repunit, levels = c('sunset','hybrid','vermilion')),
+           y = `Wt..kg.`,
+           col = repunit)) +
+  geom_boxplot()+
+  theme(legend.position = 'none',
+        axis.title.x = element_blank()) +
+  ylab('Weight (kg)')+
+  scale_color_manual(values = color_pal_hybrids)+
+  scale_y_continuous(expand = c(0, 0), limits = c(0,6.7), breaks = c(2,4,6)) +
+  geom_text(data = wt_tbl, aes(x = repunit,
+                               y = c(3.9,6.4,4.5), label = .group), 
+            size = 4, color = "black"))
+
+design <- "
+BB
+DE
+"
+
+hybrid_biological <- depth_and_size + length + weight + plot_layout(design = design) +
+  plot_annotation(tag_levels = 'a')
+
+
+ggsave(file = "~/Desktop/VermilionRF/VMSURF Species ID/figures/pop_struct_MS/SuplFig1-HybridBiological.jpeg",
+       width = 180,
+       height = 150,
+       units = c("mm"),
+       dpi = 900)
+hybrid_biological
+dev.off()
+```
